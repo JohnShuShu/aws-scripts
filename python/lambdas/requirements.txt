@@ -1,0 +1,4 @@
+boto3>=1.28.0
+vermin>=1.5.0
+pyupgrade>=3.3.0
+pylint>=2.17.0
