@@ -1,0 +1,136 @@
+#!/usr/bin/env python3
+"""
+Script to create snapshots of volumes attached to EC2 instances
+whose names start with 'branch'
+"""
+
+import boto3
+from datetime import datetime
+
+def get_instance_name(instance):
+    """Extract the Name tag from an EC2 instance"""
+    if instance.tags:
+        for tag in instance.tags:
+            if tag['Key'] == 'Name':
+                return tag['Value']
+    return None
+
+def create_snapshots_for_branch_instances():
+    """
+    Find all EC2 instances with names starting with 'branch',
+    then create snapshots of their attached volumes
+    """
+    # Initialize EC2 resource
+    ec2 = boto3.resource('ec2')
+    ec2_client = boto3.client('ec2')
+    
+    # Get all running instances
+    instances = ec2.instances.all()
+    
+    snapshot_results = []
+    
+    for instance in instances:
+        instance_name = get_instance_name(instance)
+        
+        # Check if instance name starts with 'branch'
+        if instance_name and instance_name.startswith('branch'):
+            print(f"\nProcessing instance: {instance_name} (ID: {instance.id})")
+            
+            # Get all volumes attached to this instance
+            for volume in instance.volumes.all():
+                print(f"  Creating snapshot for volume: {volume.id}")
+                
+                # Create snapshot name
+                timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+                snapshot_name = f"{instance_name} size optimizing snapshot {timestamp}"
+                
+                try:
+                    # Create the snapshot
+                    snapshot = volume.create_snapshot(
+                        Description=f"Size optimizing snapshot for {instance_name}",
+                        TagSpecifications=[
+                            {
+                                'ResourceType': 'snapshot',
+                                'Tags': [
+                                    {
+                                        'Key': 'Name',
+                                        'Value': snapshot_name
+                                    },
+                                    {
+                                        'Key': 'SourceInstance',
+                                        'Value': instance_name
+                                    },
+                                    {
+                                        'Key': 'SourceInstanceId',
+                                        'Value': instance.id
+                                    },
+                                    {
+                                        'Key': 'SourceVolumeId',
+                                        'Value': volume.id
+                                    }
+                                ]
+                            }
+                        ]
+                    )
+                    
+                    result = {
+                        'instance_name': instance_name,
+                        'instance_id': instance.id,
+                        'volume_id': volume.id,
+                        'snapshot_id': snapshot.id,
+                        'snapshot_name': snapshot_name,
+                        'status': 'success'
+                    }
+                    snapshot_results.append(result)
+                    
+                    print(f"  ✓ Snapshot created: {snapshot.id}")
+                    print(f"    Name: {snapshot_name}")
+                    
+                except Exception as e:
+                    result = {
+                        'instance_name': instance_name,
+                        'instance_id': instance.id,
+                        'volume_id': volume.id,
+                        'snapshot_id': None,
+                        'snapshot_name': snapshot_name,
+                        'status': 'failed',
+                        'error': str(e)
+                    }
+                    snapshot_results.append(result)
+                    print(f"  ✗ Failed to create snapshot: {e}")
+    
+    # Print summary
+    print("\n" + "="*60)
+    print("SUMMARY")
+    print("="*60)
+    
+    success_count = sum(1 for r in snapshot_results if r['status'] == 'success')
+    failed_count = sum(1 for r in snapshot_results if r['status'] == 'failed')
+    
+    print(f"Total snapshots created: {success_count}")
+    print(f"Failed snapshots: {failed_count}")
+    
+    if failed_count > 0:
+        print("\nFailed snapshots:")
+        for result in snapshot_results:
+            if result['status'] == 'failed':
+                print(f"  - {result['instance_name']} ({result['volume_id']}): {result['error']}")
+    
+    return snapshot_results
+
+if __name__ == "__main__":
+    print("Starting snapshot creation for 'branch' instances...")
+    print("="*60)
+    
+    try:
+        results = create_snapshots_for_branch_instances()
+        
+        if not results:
+            print("\nNo instances found with names starting with 'branch'")
+        
+    except Exception as e:
+        print(f"\nError: {e}")
+        print("\nMake sure you have:")
+        print("1. AWS credentials configured (via ~/.aws/credentials or environment variables)")
+        print("2. Proper IAM permissions for EC2 describe and snapshot operations")
+        exit(1)
